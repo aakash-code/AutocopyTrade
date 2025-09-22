@@ -1,0 +1,8 @@
+dhanhq
+smartapi-python
+pyotp
+logzero
+websocket-client
+fastapi
+uvicorn
+python-multipart
