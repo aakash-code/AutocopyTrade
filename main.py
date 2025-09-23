@@ -1,9 +1,10 @@
-import json
 import logging
 import sys
+import time
 
 from brokers.zerodha import ZerodhaBroker
 from brokers.dhan import DhanBroker
+from utils import read_config
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,14 +26,8 @@ def main():
     """
     Main function to run the trade replicator.
     """
-    try:
-        with open('config.json', 'r') as f:
-            config = json.load(f)
-    except FileNotFoundError:
-        logging.error("config.json not found. Please create it from the template.")
-        sys.exit(1)
-    except json.JSONDecodeError:
-        logging.error("Error decoding config.json. Please check its format.")
+    config = read_config()
+    if not config:
         sys.exit(1)
 
     # --- Initialize Master Account ---

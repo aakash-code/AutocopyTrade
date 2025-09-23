@@ -36,6 +36,36 @@ def decrypt_value(encrypted_value: str) -> str:
         # Depending on the desired behavior, you might want to exit or return an empty string
         return ""
 
+import json
+
+CONFIG_FILE = 'config.json'
+
+def read_config():
+    """
+    Reads the configuration from config.json.
+    """
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"Error: {CONFIG_FILE} not found.")
+        return None
+    except json.JSONDecodeError:
+        print(f"Error: Could not decode {CONFIG_FILE}. Please check its format.")
+        return None
+
+def write_config(config_data):
+    """
+    Writes the configuration data to config.json.
+    """
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config_data, f, indent=4)
+        return True
+    except IOError as e:
+        print(f"Error writing to {CONFIG_FILE}: {e}")
+        return False
+
 def encrypt_value(value: str) -> str:
     """
     Encrypts a string value using the secret key from the environment.

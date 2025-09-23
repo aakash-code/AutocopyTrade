@@ -1,13 +1,15 @@
-from flask import Flask, render_template, jsonify, request
-import json
+from flask import Flask, render_template, jsonify, request, redirect, url_for, flash
 import subprocess
 import os
+import json
+from utils import read_config, write_config, encrypt_value
 
 app = Flask(__name__)
+# A secret key is needed for flashing messages
+app.secret_key = os.urandom(24)
 
 # --- State Management (simple file-based) ---
 STATUS_FILE = 'status.json'
-CONFIG_FILE = 'config.json'
 PID_FILE = 'replicator.pid'
 
 def get_status():
@@ -85,6 +87,131 @@ def api_status():
     Returns the current status of the replicator.
     """
     return jsonify(get_status())
+
+
+# --- Account Management Routes ---
+
+@app.route('/accounts')
+def accounts():
+    config = read_config()
+    if not config:
+        flash('Could not read config.json!', 'error')
+        return render_template('accounts.html', master_account={}, child_accounts={})
+
+    return render_template('accounts.html',
+                           master_account=config.get('MASTER', {}),
+                           child_accounts=config.get('CHILD', {}))
+
+@app.route('/add_account', methods=['POST'])
+def add_account():
+    config = read_config()
+    if not config:
+        flash('Could not read config.json!', 'error')
+        return redirect(url_for('accounts'))
+
+    account_name = request.form['account_name']
+    if account_name in config['CHILD']:
+        flash(f'Account name "{account_name}" already exists!', 'error')
+        return redirect(url_for('accounts'))
+
+    # Build the new account object based on broker type
+    broker_type = request.form['broker']
+    new_account = {'broker': broker_type, 'enabled': request.form['enabled']}
+
+    if broker_type == 'zerodha':
+        # Encrypt password and TOTP if provided
+        password = request.form['password']
+        totp_secret = request.form['totp_secret']
+        if password:
+            new_account['password'] = encrypt_value(password)
+        if totp_secret:
+            new_account['TOPTSecret'] = encrypt_value(totp_secret)
+
+        new_account['userid'] = request.form['userid']
+        new_account['APIKey'] = request.form['api_key']
+        new_account['APISecret'] = request.form['api_secret']
+        new_account['loginURL'] = f"https://kite.trade/connect/login?api_key={request.form['api_key']}"
+        new_account['multiplier'] = float(request.form['multiplier'])
+
+    elif broker_type == 'dhan':
+        new_account['clientID'] = request.form['userid']
+        new_account['accessToken'] = request.form['access_token']
+        new_account['multiplier'] = float(request.form['multiplier'])
+
+    config['CHILD'][account_name] = new_account
+
+    if write_config(config):
+        flash(f'Account "{account_name}" added successfully!', 'success')
+    else:
+        flash('Failed to write to config.json!', 'error')
+
+    return redirect(url_for('accounts'))
+
+@app.route('/delete_account/<account_name>', methods=['POST'])
+def delete_account(account_name):
+    config = read_config()
+    if not config:
+        flash('Could not read config.json!', 'error')
+        return redirect(url_for('accounts'))
+
+    if account_name in config['CHILD']:
+        del config['CHILD'][account_name]
+        if write_config(config):
+            flash(f'Account "{account_name}" deleted successfully!', 'success')
+        else:
+            flash('Failed to write to config.json!', 'error')
+    else:
+        flash(f'Account "{account_name}" not found!', 'error')
+
+    return redirect(url_for('accounts'))
+
+@app.route('/edit_account/<account_name>')
+def edit_account(account_name):
+    config = read_config()
+    if not config or account_name not in config.get('CHILD', {}):
+        flash(f'Account "{account_name}" not found!', 'error')
+        return redirect(url_for('accounts'))
+
+    account = config['CHILD'][account_name]
+    return render_template('edit_account.html', account_name=account_name, account=account)
+
+@app.route('/update_account/<account_name>', methods=['POST'])
+def update_account(account_name):
+    config = read_config()
+    if not config or account_name not in config.get('CHILD', {}):
+        flash(f'Account "{account_name}" not found!', 'error')
+        return redirect(url_for('accounts'))
+
+    # Update the account details
+    account_data = config['CHILD'][account_name]
+    broker_type = account_data['broker'] # Broker type cannot be changed
+
+    if broker_type == 'zerodha':
+        password = request.form['password']
+        totp_secret = request.form['totp_secret']
+        if password:
+            account_data['password'] = encrypt_value(password)
+        if totp_secret:
+            account_data['TOPTSecret'] = encrypt_value(totp_secret)
+
+        account_data['userid'] = request.form['userid']
+        account_data['APIKey'] = request.form['api_key']
+        account_data['APISecret'] = request.form['api_secret']
+        account_data['loginURL'] = f"https://kite.trade/connect/login?api_key={request.form['api_key']}"
+
+    elif broker_type == 'dhan':
+        account_data['clientID'] = request.form['userid']
+        account_data['accessToken'] = request.form['access_token']
+
+    account_data['multiplier'] = float(request.form['multiplier'])
+    account_data['enabled'] = request.form['enabled']
+
+    if write_config(config):
+        flash(f'Account "{account_name}" updated successfully!', 'success')
+    else:
+        flash('Failed to write to config.json!', 'error')
+
+    return redirect(url_for('accounts'))
 
 
 if __name__ == '__main__':
