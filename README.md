@@ -5,6 +5,7 @@ This project is a trade replicator that allows trades from a master trading acco
 ## Features
 
 - **Multi-Broker Support:** Core logic is architected to support different brokers. Comes with a full implementation for Zerodha and a partial implementation for Dhan.
+- **Stable, Selenium-Free Login:** The Zerodha login process no longer uses Selenium. It uses direct web requests, making it faster, more reliable, and removing the need to manage `chromedriver`.
 - **Web-Based UI:** A simple web dashboard (`app.py`) allows you to start, stop, and manage the trade replication engine from your browser.
 - **Web-Based Account Management:** Add, edit, and delete child accounts directly from the web interface.
 - **Instrument Mapping UI:** A page to view and link instruments between different brokers.
@@ -15,7 +16,7 @@ This project is a trade replicator that allows trades from a master trading acco
 ## How It Works
 
 The application consists of two main parts:
-1.  **Trade Replication Engine (`main.py`):** This is the core script that connects to the master and child broker accounts, listens for order updates on the master account via a websocket, and replicates the trades to the child accounts.
+1.  **Trade Replication Engine (`main.py`):** This is the core script that programmatically logs into the master and child broker accounts (handling 2FA), listens for order updates on the master account's websocket, and replicates the trades to the child accounts.
 2.  **Web Dashboard (`app.py`):** This is a Flask web server that provides a simple UI to start and stop the replication engine. It runs `main.py` as a background process.
 
 ## Setup and Installation
