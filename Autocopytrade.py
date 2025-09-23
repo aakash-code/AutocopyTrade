@@ -40,7 +40,7 @@ else:
 
 
 def getRequestToken(loginConfig):
-    
+
     logging.info("Getting the request token for : {}".format(loginConfig['userid']))
     options = webdriver.ChromeOptions()
     options.add_argument('--ignore-certificate-error')
@@ -83,7 +83,7 @@ def on_ticks(ws, ticks):
         test=1
         #logging.info("Current mode: {}".format(ticks[0]["mode"]))
 
-tokens = [260105] # dummy sensex token. Add tokens based 
+tokens = [260105] # dummy sensex token. Add tokens based
 # Callback for successful connection.
 def on_connect(ws, response):
     logging.info("Successfully connected. Response: {}".format(response))
@@ -109,27 +109,27 @@ def on_reconnect(ws, attempts_count):
 # Callback when all reconnect failed (exhausted max retries)
 def on_noreconnect(ws):
     logging.info("Reconnect failed.")
-    
+
 def on_order_update(ws, data):
     logging.info("Order alert received : {}".format(data))
     copyTrade(data)
-    
-    
+
+
 def copyTrade(data):
     logging.debug('starting copy trade')
-    
+
 
     if data['product'] not in prodFilter:
         if data['status'] == 'CANCELLED':
             cancelTargetOrders(data)
         else:
             logging.debug('copy trade open and update')
-            
+
             #ignore UPDATE messages as it is resulting in out of sequence order updates
             if (data['status'] == 'OPEN') or (data['status']=='TRIGGER PENDING'):
                 if (data['order_id'] in sourceOrders):
                     updateTargetOrders(data)
-                else: 
+                else:
                     createTargetOrders(data)
         showMarginsAvailable()
     else:
@@ -138,14 +138,14 @@ def copyTrade(data):
 # extract order parameters
 # Validate if there is a change in order
 # if new order create the target orders
-# if update, update target orders 
+# if update, update target orders
 # if cancelled, cancel target order
 
 
 def getTargetOrder(orderid, userid):
     key = orderid + '|' + userid
     return orderlookup[key]
-    
+
 # store the child orders in lookup dictionary
 def storeTargetOrder(parent_oid, userid,child_oid):
     key = parent_oid + '|' + userid
@@ -158,7 +158,7 @@ def createTargetOrders(data):
         accDetail = childaccts[childacct]
        # logging.info("Updated order {userid} - {cldorder}".format(userid=accDetail['userid'], cldorder=accDetail['multiplier']))
         createTargetOrder(data,accDetail['userid'], accDetail['kiteobj'], accDetail['multiplier'])
-    
+
 def createTargetOrder(orderdata, userid,targetAccnt,multiplier):
     logging.info('creating order{}'.format(orderdata['order_id']))
 
@@ -182,7 +182,7 @@ def createTargetOrder(orderdata, userid,targetAccnt,multiplier):
         stacktrace=traceback.format_exc()
         logging.error("***** ERROR Order create error {exception} - {stacktrace}".format(exception=e, stacktrace=stacktrace))
         print("Child order not created for parent order"+orderdata['order_id']+" for user id " + userid)
-        
+
 def showMarginsAvailable():
     print('---Margins--Available----------Used-----Cash Available-----------------------')
     #print('-----------------Margins----------------------------')
@@ -193,7 +193,7 @@ def showMarginsAvailable():
         showMargin(kite=accDetail['kiteobj'],userid=accDetail['userid'])
     print('----------------------------------------------------')
 
-    
+
 
 def showMargin(kite,userid):
     margin = kite.margins(segment="equity")
@@ -205,16 +205,16 @@ def showMargin(kite,userid):
 def checkifupdate(orderdata):
     origorder = sourceOrders[orderdata['order_id']]
     if (origorder['variety']== orderdata['variety'] and
-        origorder['order_type']== orderdata['order_type'] and 
+        origorder['order_type']== orderdata['order_type'] and
         origorder['quantity']== orderdata['quantity'] and
         origorder['price']== orderdata['price'] and
         origorder['trigger_price']== orderdata['trigger_price'] ):
-        
+
         return False
     else:
         return True
 
-#Update target order for each child account after checking if the order parameters have changed. 
+#Update target order for each child account after checking if the order parameters have changed.
 #Show error if the it is an old order that doesn't have any mapping
 def updateTargetOrders(data):
     logging.info('inside update orders')
@@ -230,7 +230,7 @@ def updateTargetOrders(data):
         stacktrace=traceback.format_exc()
         logging.error("***** ERROR Order update error {exception} - {stacktrace}".format(exception=e, stacktrace=stacktrace))
         print("Order mapping not found " + data['order_id'])
-        
+
 def updateTargetOrder(orderdata, userid, targetAccnt,multiplier):
     logging.info('Updating order{}'.format(orderdata['order_id']))
 
@@ -250,14 +250,14 @@ def updateTargetOrder(orderdata, userid, targetAccnt,multiplier):
         stacktrace=traceback.format_exc()
         logging.error("***** ERROR Order update error {exception} - {stacktrace}".format(exception=e, stacktrace=stacktrace))
         print("Child order not updated for parent order"+orderdata['order_id']+" for user id " + userid)
-        
-        
+
+
 def cancelTargetOrders(data):
     for childacct in childaccts:
         accDetail = childaccts[childacct]
         cancelTargetOrder(data,accDetail['userid'], accDetail['kiteobj'])
-        
-def cancelTargetOrder(orderdata,userid, targetAccnt): 
+
+def cancelTargetOrder(orderdata,userid, targetAccnt):
     logging.info('Cancelling order{}'.format(orderdata['order_id']))
     try:
         targetorder= getTargetOrder(orderdata['order_id'], userid)
@@ -265,9 +265,9 @@ def cancelTargetOrder(orderdata,userid, targetAccnt):
     except Exception as e:
         stacktrace=traceback.format_exc()
         logging.error("Order cancel error {exception} - {stacktrace}".format(exception=e, stacktrace=stacktrace))
-    
+
     logging.info("Cancelled order {userid} - {cldorder}".format(userid=userid, cldorder=targetorder))
-    
+
 # Master account login
 masterconfig = config['MASTER']
 prodFilter = config['DONOTPROCESSPROD']
@@ -280,9 +280,9 @@ try:
     print ("Request token received:",requestToken)
     time.sleep(2)
     data = kitemaster.generate_session(request_token=requestToken, api_secret=masterconfig['APISecret'])
-    kws = KiteTicker(masterconfig['APIKey'], data["access_token"])       
+    kws = KiteTicker(masterconfig['APIKey'], data["access_token"])
     print ('Kitemaster Connection successful')
-     
+
 except Exception as e:
     stacktrace=traceback.format_exc()
     logging.error("Connection Error {exception} - {stacktrace}".format(exception=e, stacktrace=stacktrace))
@@ -306,7 +306,7 @@ for childacct in config['CHILD']:
     if ( childconfig['enabled'] == 'Y'):
         child['userid']= childconfig['userid']
         child['api_key']= childconfig['APIKey']
-        child['api_secret'] = childconfig['APISecret'] 
+        child['api_secret'] = childconfig['APISecret']
         child['multiplier'] = childconfig['multiplier']
         child['request_token'] =    getRequestToken(childconfig)
         try:
@@ -315,7 +315,7 @@ for childacct in config['CHILD']:
             data = kite.generate_session(request_token=child['request_token'], api_secret=child['api_secret'])
             kite.set_access_token(data["access_token"])
             print("Kiteconnect session established")
-        
+
         except Exception as e:
             stacktrace=traceback.format_exc()
             logging.error("Connection Error {exception} - {stacktrace}".format(exception=e, stacktrace=stacktrace))
