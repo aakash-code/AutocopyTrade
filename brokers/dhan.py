@@ -1,6 +1,10 @@
 import logging
 import time
-from dhanhq import dhanhq, orderupdate
+import asyncio
+import websockets
+import json
+from dhanhq import dhanhq
+
 from brokers.base import Broker
 
 class DhanBroker(Broker):
@@ -20,7 +24,6 @@ class DhanBroker(Broker):
         try:
             logging.info(f"Initializing Dhan client for {self.config['clientID']}")
             self.dhan_client = dhanhq(self.config['clientID'], self.config['accessToken'])
-            # Test the connection by fetching fund limits
             if self.dhan_client.get_fund_limits():
                  print(f"Dhan client for {self.config['clientID']} initialized successfully.")
                  self.client = self.dhan_client
@@ -83,14 +86,6 @@ class DhanBroker(Broker):
         A full implementation would require parameter mapping similar to place_order.
         """
         logging.warning(f"Dhan modify_order is not yet implemented for order: {order_data.get('order_id')}")
-        # Example:
-        # response = self.dhan_client.modify_order(
-        #     order_id=order_data['order_id'],
-        #     quantity=order_data['quantity'],
-        #     price=order_data['price'],
-        #     trigger_price=order_data['trigger_price'],
-        #     order_type=... # requires mapping
-        # )
         return None
 
     def cancel_order(self, order_data):
@@ -123,32 +118,44 @@ class DhanBroker(Broker):
     def start_websocket(self, on_order_update_callback):
         """
         Starts the websocket connection for real-time order updates.
+        This is a custom implementation to adapt the v2.0.2 OrderSocket logic.
         """
         if not self.dhan_client:
             logging.error("Dhan client not initialized. Cannot start websocket.")
             return
 
-        def on_update_wrapper(order_data):
-            # The Dhan library provides the data in a 'Data' key.
-            if isinstance(order_data, dict) and "Data" in order_data:
-                on_order_update_callback(self.order_ws, order_data["Data"])
-            else:
-                # This is to adapt to the on_order_update signature in main.py which expects (ws, data)
-                on_order_update_callback(self.order_ws, order_data)
+        class CustomOrderSocket:
+            def __init__(self, client_id, access_token, callback):
+                self.client_id = client_id
+                self.access_token = access_token
+                self.order_feed_wss = "wss://api-order-update.dhan.co"
+                self.on_update = callback
+                self.ws = None
 
-        self.order_ws = orderupdate.OrderUpdate(self.config['clientID'], self.config['accessToken'])
-        self.order_ws.on_update = on_update_wrapper
+            async def connect_order_update(self):
+                async with websockets.connect(self.order_feed_wss) as websocket:
+                    self.ws = websocket
+                    auth_message = {
+                        "LoginReq": {"MsgCode": 42, "ClientId": str(self.client_id), "Token": str(self.access_token)},
+                        "UserType": "SELF"
+                    }
+                    await websocket.send(json.dumps(auth_message))
+                    async for message in websocket:
+                        data = json.loads(message)
+                        if data.get('Type') == 'order_alert' and 'Data' in data:
+                            self.on_update(self.ws, data['Data'])
 
-        def connect_loop():
-            while True:
+            def connect_to_dhan_websocket_sync(self):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 try:
-                    logging.info("Connecting to Dhan order websocket...")
-                    self.order_ws.connect_to_dhan_websocket_sync()
-                except Exception as e:
-                    logging.error(f"Dhan WebSocket error: {e}. Reconnecting in 5 seconds...")
-                    time.sleep(5)
+                    loop.run_until_complete(self.connect_order_update())
+                finally:
+                    loop.close()
+
+        self.order_ws = CustomOrderSocket(self.config['clientID'], self.config['accessToken'], on_order_update_callback)
 
         import threading
-        ws_thread = threading.Thread(target=connect_loop, daemon=True)
+        ws_thread = threading.Thread(target=self.order_ws.connect_to_dhan_websocket_sync, daemon=True)
         ws_thread.start()
         logging.info("Dhan order websocket thread started.")
