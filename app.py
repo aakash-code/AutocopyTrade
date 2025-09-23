@@ -286,5 +286,39 @@ def add_mapping():
     return redirect(url_for('mapping'))
 
 
+# --- Global Settings Routes ---
+
+@app.route('/settings')
+def settings():
+    config = read_config()
+    if not config:
+        flash('Could not read config.json!', 'error')
+        return render_template('settings.html', product_filter_str="")
+
+    product_filter = config.get('DONOTPROCESSPROD', [])
+    product_filter_str = ", ".join(product_filter)
+    return render_template('settings.html', product_filter_str=product_filter_str)
+
+@app.route('/update_settings', methods=['POST'])
+def update_settings():
+    config = read_config()
+    if not config:
+        flash('Could not read config.json!', 'error')
+        return redirect(url_for('settings'))
+
+    # Update product filter
+    product_filter_str = request.form.get('donotprocessprod', '')
+    # Convert comma-separated string to a list of uppercase strings, stripping whitespace
+    product_filter_list = [item.strip().upper() for item in product_filter_str.split(',') if item.strip()]
+    config['DONOTPROCESSPROD'] = product_filter_list
+
+    if write_config(config):
+        flash('Global settings updated successfully!', 'success')
+    else:
+        flash('Failed to write to config.json!', 'error')
+
+    return redirect(url_for('settings'))
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
