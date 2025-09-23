@@ -39,7 +39,15 @@
             </div>
             <div id="status" class="status-box">
                 <p><strong>Status:</strong> <span id="status-text">Loading...</span></p>
-            <p><span id="status-message"></span></p>
+                <p><span id="status-message"></span></p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Broker Status</h2>
+            <div id="broker-status-container">
+                <p>Loading broker statuses...</p>
+            </div>
         </div>
     </div>
 
@@ -83,9 +91,39 @@
             updateStatus();
         });
 
+        const brokerStatusContainer = document.getElementById('broker-status-container');
+
+        async function updateBrokerStatus() {
+            try {
+                const response = await fetch('/api/broker_status');
+                const data = await response.json();
+
+                brokerStatusContainer.innerHTML = ''; // Clear previous content
+
+                for (const [name, details] of Object.entries(data)) {
+                    const statusClass = details.status === 'Connected' ? 'status-Running' : 'status-Stopped';
+                    const margin_info = JSON.stringify(details.margins, null, 2);
+
+                    const card = document.createElement('div');
+                    card.className = `status-box ${statusClass}`;
+                    card.innerHTML = `
+                        <h4>${name} (${details.id})</h4>
+                        <p><strong>Status:</strong> ${details.status}</p>
+                        <pre><strong>Margins:</strong>\n${margin_info}</pre>
+                    `;
+                    brokerStatusContainer.appendChild(card);
+                }
+
+            } catch (error) {
+                brokerStatusContainer.innerHTML = '<p>Error loading broker statuses.</p>';
+            }
+        }
+
         // Initial status update and then poll every 5 seconds
         updateStatus();
+        updateBrokerStatus();
         setInterval(updateStatus, 5000);
+        setInterval(updateBrokerStatus, 10000); // Update broker status every 10 seconds
     </script>
 </body>
 </html>

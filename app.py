@@ -89,6 +89,17 @@ def api_status():
     """
     return jsonify(get_status())
 
+@app.route('/api/broker_status')
+def broker_status():
+    """
+    Returns the detailed status of each broker.
+    """
+    try:
+        with open('broker_status.json', 'r') as f:
+            return jsonify(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return jsonify({})
+
 
 # --- Account Management Routes ---
 
