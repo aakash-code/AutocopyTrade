@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instrument Mapping</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #1a1a1a; color: #f0f2f5; margin: 0; padding: 2rem; }
+        .container { max-width: 1600px; margin: auto; }
+        h1, h2 { color: #fff; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        a { color: #3498db; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .card { background: #2c2c2c; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; }
+        .form-group input, .form-group select { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #555; background-color: #333; color: #fff; box-sizing: border-box; }
+        button { padding: 10px 20px; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-size: 1rem; background-color: #3498db; }
+        .columns { display: flex; gap: 20px; }
+        .column { flex: 1; }
+        .instrument-table { height: 400px; overflow-y: auto; border: 1px solid #444; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border-bottom: 1px solid #444; text-align: left; }
+        th { background-color: #2c3e50; position: sticky; top: 0; }
+        .search-box { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p><a href="/">&larr; Back to Dashboard</a></p>
+        <h1>Instrument Mapping</h1>
+
+        <div class="card">
+            <h2>Create New Mapping</h2>
+            <form action="/add_mapping" method="POST">
+                <div class="columns">
+                    <div class="column">
+                        <h3>Source (Zerodha)</h3>
+                        <p>Select an instrument from the list below.</p>
+                        <input type="text" id="zerodha_instrument" name="zerodha_instrument" readonly>
+                    </div>
+                    <div class="column">
+                        <h3>Target (Dhan)</h3>
+                        <p>Select an instrument from the list below.</p>
+                        <input type="text" id="dhan_instrument" name="dhan_instrument" readonly>
+                    </div>
+                </div>
+                <button type="submit" style="margin-top: 20px;">Link Instruments</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Existing Mappings</h2>
+            <table>
+                <thead><tr><th>Source (Zerodha)</th><th>Target (Dhan)</th><th>Actions</th></tr></thead>
+                <tbody>
+                    {% for source, targets in mappings.items() %}
+                    <tr>
+                        <td>{{ source }}</td>
+                        <td>{{ targets.dhan }}</td>
+                        <td><a href="#">Delete</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="columns">
+            <div class="column card">
+                <h2>Zerodha Instruments</h2>
+                <input type="text" class="search-box" id="zerodha_search" onkeyup="filterTable('zerodha_table', 'zerodha_search')" placeholder="Search for names..">
+                <div class="instrument-table">
+                    <table id="zerodha_table">
+                        <thead><tr><th>Tradingsymbol</th><th>Instrument Token</th><th>Name</th></tr></thead>
+                        <tbody>
+                            {% for index, row in zerodha_instruments.iterrows() %}
+                            <tr onclick="selectInstrument('zerodha', '{{ row.exchange }}:{{ row.tradingsymbol }}')">
+                                <td>{{ row.tradingsymbol }}</td>
+                                <td>{{ row.instrument_token }}</td>
+                                <td>{{ row.name }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="column card">
+                <h2>Dhan Instruments</h2>
+                <input type="text" class="search-box" id="dhan_search" onkeyup="filterTable('dhan_table', 'dhan_search')" placeholder="Search for names..">
+                <div class="instrument-table">
+                    <table id="dhan_table">
+                        <thead><tr><th>Trading Symbol</th><th>Security ID</th><th>Exchange</th></tr></thead>
+                        <tbody>
+                            {% for index, row in dhan_instruments.iterrows() %}
+                            <tr onclick="selectInstrument('dhan', '{{ row.SEM_SMST_SECURITY_ID }}')">
+                                <td>{{ row.SEM_TRADING_SYMBOL }}</td>
+                                <td>{{ row.SEM_SMST_SECURITY_ID }}</td>
+                                <td>{{ row.SEM_EXCH_NAME }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function selectInstrument(broker, identifier) {
+            document.getElementById(broker + '_instrument').value = identifier;
+        }
+
+        function filterTable(tableId, inputId) {
+            const input = document.getElementById(inputId);
+            const filter = input.value.toUpperCase();
+            const table = document.getElementById(tableId);
+            const tr = table.getElementsByTagName("tr");
+
+            for (let i = 1; i < tr.length; i++) { // Start from 1 to skip header
+                let td = tr[i].getElementsByTagName("td")[0]; // Search in the first column
+                if (td) {
+                    let txtValue = td.textContent || td.innerText;
+                    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                        tr[i].style.display = "";
+                    } else {
+                        tr[i].style.display = "none";
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

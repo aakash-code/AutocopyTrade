@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, request, redirect, url_for, f
 import subprocess
 import os
 import json
+import pandas as pd
 from utils import read_config, write_config, encrypt_value
 
 app = Flask(__name__)
@@ -212,6 +213,66 @@ def update_account(account_name):
         flash('Failed to write to config.json!', 'error')
 
     return redirect(url_for('accounts'))
+
+
+# --- Instrument Mapping Routes ---
+
+@app.route('/mapping')
+def mapping():
+    # Load instrument lists
+    try:
+        zerodha_instruments = pd.read_csv('zerodha_instruments.csv')
+    except FileNotFoundError:
+        zerodha_instruments = pd.DataFrame()
+        flash('zerodha_instruments.csv not found. Please run fetch_instruments.py first.', 'warning')
+
+    try:
+        dhan_instruments = pd.read_csv('dhan_instruments.csv')
+    except FileNotFoundError:
+        dhan_instruments = pd.DataFrame()
+        flash('dhan_instruments.csv not found. Please run fetch_instruments.py first.', 'warning')
+
+    # Load existing mappings
+    try:
+        with open('instrument_mappings.json', 'r') as f:
+            mappings = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        mappings = {}
+
+    return render_template('mapping.html',
+                           zerodha_instruments=zerodha_instruments.head(1000), # Limit for performance
+                           dhan_instruments=dhan_instruments.head(1000),
+                           mappings=mappings)
+
+@app.route('/add_mapping', methods=['POST'])
+def add_mapping():
+    try:
+        with open('instrument_mappings.json', 'r') as f:
+            mappings = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        mappings = {}
+
+    source_instrument = request.form['zerodha_instrument']
+    target_instrument = request.form['dhan_instrument']
+
+    if not source_instrument or not target_instrument:
+        flash('Please select one instrument from each list.', 'error')
+        return redirect(url_for('mapping'))
+
+    # For now, we only map to dhan. This could be extended.
+    if source_instrument in mappings:
+        mappings[source_instrument]['dhan'] = target_instrument
+    else:
+        mappings[source_instrument] = {'dhan': target_instrument}
+
+    try:
+        with open('instrument_mappings.json', 'w') as f:
+            json.dump(mappings, f, indent=4)
+        flash('Mapping saved successfully!', 'success')
+    except IOError:
+        flash('Failed to save mapping!', 'error')
+
+    return redirect(url_for('mapping'))
 
 
 if __name__ == '__main__':

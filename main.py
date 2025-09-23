@@ -1,6 +1,7 @@
 import logging
 import sys
 import time
+import json
 
 from brokers.zerodha import ZerodhaBroker
 from brokers.dhan import DhanBroker
@@ -29,6 +30,14 @@ def main():
     config = read_config()
     if not config:
         sys.exit(1)
+
+    # Load instrument mappings
+    try:
+        with open('instrument_mappings.json', 'r') as f:
+            instrument_mappings = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        instrument_mappings = {}
+        logging.warning("instrument_mappings.json not found or is invalid. No instrument translation will occur.")
 
     # --- Initialize Master Account ---
     master_config = config.get('MASTER')
@@ -83,7 +92,7 @@ def main():
         print('----------------------------------------------------')
 
 
-    def copy_trade_callback(ws, master_order):
+    def copy_trade_callback(ws, master_order, mappings):
         logging.info(f"Order update received: {master_order}")
 
         if master_order.get('product') in prod_filter:
@@ -133,19 +142,28 @@ def main():
                 logging.info(f"Creating child orders for new master order: {master_order_id}")
                 order_manager.add_master_order(master_order)
                 for name, child_broker in child_brokers.items():
+
+                    place_data = master_order.copy()
+
+                    # --- Instrument Mapping Logic ---
+                    master_broker_type = master_broker.config.get('broker')
+                    child_broker_type = child_broker.config.get('broker')
+
+                    if master_broker_type != child_broker_type:
+                        master_symbol_key = f"{master_broker_type}:{place_data['exchange']}:{place_data['tradingsymbol']}"
+
+                        if master_symbol_key in mappings and child_broker_type in mappings[master_symbol_key]:
+                            translated_symbol = mappings[master_symbol_key][child_broker_type]
+                            logging.info(f"Translating {master_symbol_key} to {translated_symbol} for {name}")
+                            place_data['tradingsymbol'] = translated_symbol
+                        else:
+                            logging.warning(f"No mapping found for {master_symbol_key} to {child_broker_type}. Skipping order for {name}.")
+                            continue # Skip this child broker
+                    # --- End of Mapping Logic ---
+
                     multiplier = child_broker.config.get('multiplier', 1.0)
-                    place_data = {
-                        'variety': master_order['variety'],
-                        'exchange': master_order['exchange'],
-                        'tradingsymbol': master_order['tradingsymbol'],
-                        'transaction_type': master_order['transaction_type'],
-                        'quantity': int(round(int(master_order['quantity']) * float(multiplier), 0)),
-                        'product': master_order['product'],
-                        'order_type': master_order['order_type'],
-                        'price': master_order['price'],
-                        'trigger_price': master_order['trigger_price'],
-                        'validity': master_order['validity'],
-                    }
+                    place_data['quantity'] = int(round(int(place_data['quantity']) * float(multiplier), 0))
+
                     child_order_id = child_broker.place_order(place_data)
                     if child_order_id:
                         order_manager.add_child_order(master_order_id, name, child_order_id)
@@ -153,8 +171,10 @@ def main():
         show_margins()
 
     # --- Start Websocket and Run Forever ---
+    from functools import partial
+
     show_margins()
-    master_broker.start_websocket(copy_trade_callback)
+    master_broker.start_websocket(partial(copy_trade_callback, mappings=instrument_mappings))
     print("\n--- Websocket connected. Listening for order updates... ---")
 
     try:
