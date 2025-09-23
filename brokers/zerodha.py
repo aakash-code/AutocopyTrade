@@ -2,9 +2,8 @@ import time
 import logging
 import traceback
 from urllib import parse
+import requests
 from kiteconnect import KiteConnect, KiteTicker
-from selenium import webdriver
-from selenium.webdriver.common.by import By
 import onetimepass as otp
 
 from brokers.base import Broker
@@ -23,46 +22,44 @@ class ZerodhaBroker(Broker):
 
     def _get_request_token(self):
         """
-        Automates the Zerodha login process to get a request token.
+        Gets the request token by making HTTP requests instead of using selenium.
         """
         logging.info(f"Getting request token for: {self.config['userid']}")
-        options = webdriver.ChromeOptions()
-        options.add_argument('--headless') # Run in headless mode
-        options.add_argument('--disable-gpu')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--ignore-certificate-errors')
-        options.add_argument('--ignore-ssl-errors')
-        options.add_argument(f"--user-data-dir=/tmp/chrome_profile_{self.config['userid']}")
-
         try:
-            # Assumes chromedriver is in the system's PATH
-            driver = webdriver.Chrome(options=options)
-            driver.delete_all_cookies()
-            driver.implicitly_wait(4)
+            session = requests.Session()
 
-            login_url = self.config['loginURL'].replace('<apikey>', self.config['APIKey'])
-            driver.get(login_url)
+            # 1. Initial login request to get cookies and request_id
+            login_payload = {
+                "user_id": self.config['userid'],
+                "password": decrypt_value(self.config['password']),
+            }
+            login_response = session.post("https://kite.zerodha.com/api/login", data=login_payload)
+            login_response.raise_for_status()
+            request_id = login_response.json()["data"]["request_id"]
 
-            # Enter credentials
-            driver.find_element(by=By.ID, value='userid').send_keys(self.config['userid'])
-            driver.find_element(by=By.ID, value='password').send_keys(decrypt_value(self.config['password']))
-            driver.find_element(by=By.XPATH, value='//button[@type="submit"]').click()
-
-            time.sleep(2) # Wait for 2FA page to load
-
-            # Enter TOTP
+            # 2. 2FA request with TOTP
             totp_secret = decrypt_value(self.config['TOPTSecret'])
             token = otp.get_totp(totp_secret)
-            driver.find_element(by=By.XPATH, value='//input[@type="text"]').send_keys(token)
-            driver.find_element(by=By.XPATH, value='//button[@type="submit"]').click()
+            twofa_payload = {
+                "user_id": self.config['userid'],
+                "request_id": request_id,
+                "twofa_value": token,
+                "twofa_type": "totp",
+                "skip_session": True,
+            }
+            twofa_response = session.post("https://kite.zerodha.com/api/twofa", data=twofa_payload)
+            twofa_response.raise_for_status()
 
-            time.sleep(4) # Wait for redirect
+            # 3. Final GET request to the login URL to get the request_token
+            # The request_token is now in the cookies of the session
+            final_url = self.config['loginURL'].replace('<apikey>', self.config['APIKey'])
+            final_response = session.get(final_url, allow_redirects=True)
+            final_response.raise_for_status()
 
-            # Extract request token from the redirect URL
-            url = driver.current_url
-            request_token = parse.parse_qs(parse.urlparse(url).query)['request_token'][0]
+            # The request_token is in the query parameters of the final redirected URL
+            request_token = parse.parse_qs(parse.urlparse(final_response.url).query)['request_token'][0]
 
-            logging.info(f"Successfully logged in and got request token for: {self.config['userid']}")
+            logging.info(f"Successfully got request token for: {self.config['userid']}")
             print(f"{self.config['userid']} successfully logged in.")
             return request_token
 
@@ -70,9 +67,6 @@ class ZerodhaBroker(Broker):
             logging.error(f"Failed to get request token for {self.config['userid']}: {e}")
             traceback.print_exc()
             return None
-        finally:
-            if 'driver' in locals():
-                driver.quit()
 
     def login(self):
         """
