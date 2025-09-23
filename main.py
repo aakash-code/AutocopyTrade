@@ -2,6 +2,9 @@ import logging
 import sys
 import time
 import json
+import csv
+import os
+from datetime import datetime
 
 from brokers.zerodha import ZerodhaBroker
 from brokers.dhan import DhanBroker
@@ -77,8 +80,19 @@ def main():
 
     # --- Status and Order Management ---
     BROKER_STATUS_FILE = 'broker_status.json'
+    TRADE_LOG_FILE = 'trade_log.csv'
     order_manager = OrderManager()
     prod_filter = config.get('DONOTPROCESSPROD', [])
+
+    def log_trade(child_name, action, order_data, result):
+        """Appends a record of a trade action to the CSV log."""
+        file_exists = os.path.isfile(TRADE_LOG_FILE)
+        with open(TRADE_LOG_FILE, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(['timestamp', 'child_account', 'action', 'order_data', 'result'])
+
+            writer.writerow([datetime.now().isoformat(), child_name, action, json.dumps(order_data), json.dumps(result)])
 
     def update_broker_statuses():
         """
@@ -123,13 +137,35 @@ def main():
 
         if status == 'CANCELLED':
             logging.info(f"Cancelling child orders for master order: {master_order_id}")
-            # ... (rest of the logic is the same)
-            # ...
+            child_orders = order_manager.get_child_orders(master_order_id)
+            for name, child_broker in child_brokers.items():
+                child_order_id = child_orders.get(name)
+                if child_order_id:
+                    cancel_data = {'variety': master_order['variety'], 'order_id': child_order_id}
+                    result = child_broker.cancel_order(cancel_data)
+                    log_trade(name, 'cancel', cancel_data, result)
+
         elif status in ['OPEN', 'TRIGGER PENDING']:
             if order_manager.is_known_order(master_order_id):
-                # ... (rest of the logic is the same)
-                # ...
-                pass
+                logging.info(f"Updating child orders for master order: {master_order_id}")
+                if order_manager.check_if_update(master_order_id, master_order):
+                    child_orders = order_manager.get_child_orders(master_order_id)
+                    for name, child_broker in child_brokers.items():
+                        child_order_id = child_orders.get(name)
+                        if child_order_id:
+                            multiplier = child_broker.config.get('multiplier', 1.0)
+                            modify_data = {
+                                'order_id': child_order_id,
+                                'quantity': int(round(int(master_order['quantity']) * float(multiplier), 0)),
+                                'price': master_order['price'],
+                                'trigger_price': master_order['trigger_price'],
+                                'variety': master_order['variety'],
+                                'order_type': master_order['order_type'],
+                                'validity': master_order['validity'],
+                            }
+                            result = child_broker.modify_order(modify_data)
+                            log_trade(name, 'modify', modify_data, result)
+                    order_manager.add_master_order(master_order)
             else:
                 # This is a new order
                 logging.info(f"Creating child orders for new master order: {master_order_id}")
@@ -158,6 +194,7 @@ def main():
                     place_data['quantity'] = int(round(int(place_data['quantity']) * float(multiplier), 0))
 
                     child_order_id = child_broker.place_order(place_data)
+                    log_trade(name, 'place', place_data, child_order_id)
                     if child_order_id:
                         order_manager.add_child_order(master_order_id, name, child_order_id)
 

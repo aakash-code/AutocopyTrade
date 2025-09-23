@@ -320,5 +320,23 @@ def update_settings():
     return redirect(url_for('settings'))
 
 
+# --- History Route ---
+
+@app.route('/history')
+def history():
+    try:
+        # Read the log file and reverse it so recent trades are on top
+        trade_log_df = pd.read_csv('trade_log.csv')
+        trade_log = trade_log_df.iloc[::-1].to_dict(orient='records')
+    except FileNotFoundError:
+        trade_log = []
+        flash('trade_log.csv not found. No trades have been logged yet.', 'warning')
+    except Exception as e:
+        trade_log = []
+        flash(f'Error reading trade log: {e}', 'error')
+
+    return render_template('history.html', trade_log=trade_log)
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
