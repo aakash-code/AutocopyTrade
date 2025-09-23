@@ -1,6 +1,6 @@
 import logging
 import time
-from dhanhq import DhanContext, dhanhq, OrderUpdate
+from dhanhq import dhanhq, orderupdate
 from brokers.base import Broker
 
 class DhanBroker(Broker):
@@ -19,8 +19,7 @@ class DhanBroker(Broker):
         """
         try:
             logging.info(f"Initializing Dhan client for {self.config['clientID']}")
-            dhan_context = DhanContext(self.config['clientID'], self.config['accessToken'])
-            self.dhan_client = dhanhq(dhan_context)
+            self.dhan_client = dhanhq(self.config['clientID'], self.config['accessToken'])
             # Test the connection by fetching fund limits
             if self.dhan_client.get_fund_limits():
                  print(f"Dhan client for {self.config['clientID']} initialized successfully.")
@@ -137,8 +136,7 @@ class DhanBroker(Broker):
                 # This is to adapt to the on_order_update signature in main.py which expects (ws, data)
                 on_order_update_callback(self.order_ws, order_data)
 
-        dhan_context = DhanContext(self.config['clientID'], self.config['accessToken'])
-        self.order_ws = OrderUpdate(dhan_context)
+        self.order_ws = orderupdate.OrderUpdate(self.config['clientID'], self.config['accessToken'])
         self.order_ws.on_update = on_update_wrapper
 
         def connect_loop():
