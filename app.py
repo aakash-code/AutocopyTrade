@@ -75,13 +75,17 @@ def broker_status():
         return jsonify({})
 
 # --- Account Management Routes ---
+
 @app.route('/accounts')
 def accounts():
     config = read_config()
     if not config:
         flash('Could not read config.json!', 'error')
-        return render_template('accounts.html', master_account={}, child_accounts={})
-    return render_template('accounts.html', master_account=config.get('MASTER', {}), child_accounts=config.get('CHILD', {}))
+        return render_template('accounts.html', accounts={}, master_account_name=None)
+
+    return render_template('accounts.html',
+                           accounts=config.get('ACCOUNTS', {}),
+                           master_account_name=config.get('MASTER_ACCOUNT_NAME'))
 
 @app.route('/add_account', methods=['POST'])
 def add_account():
@@ -89,19 +93,20 @@ def add_account():
     if not config:
         flash('Could not read config.json!', 'error')
         return redirect(url_for('accounts'))
+
     account_name = request.form['account_name']
-    if account_name in config['CHILD']:
+    if account_name in config.get('ACCOUNTS', {}):
         flash(f'Account name "{account_name}" already exists!', 'error')
         return redirect(url_for('accounts'))
+
     broker_type = request.form['broker']
     new_account = {'broker': broker_type, 'enabled': request.form['enabled']}
+
     if broker_type == 'zerodha':
         password = request.form['password']
         totp_secret = request.form['totp_secret']
-        if password:
-            new_account['password'] = encrypt_value(password)
-        if totp_secret:
-            new_account['TOPTSecret'] = encrypt_value(totp_secret)
+        if password: new_account['password'] = encrypt_value(password)
+        if totp_secret: new_account['TOPTSecret'] = encrypt_value(totp_secret)
         new_account['userid'] = request.form['userid']
         new_account['APIKey'] = request.form['api_key']
         new_account['APISecret'] = request.form['api_secret']
@@ -111,11 +116,35 @@ def add_account():
         new_account['clientID'] = request.form['userid']
         new_account['accessToken'] = request.form['access_token']
         new_account['multiplier'] = float(request.form['multiplier'])
-    config['CHILD'][account_name] = new_account
+
+    if 'ACCOUNTS' not in config:
+        config['ACCOUNTS'] = {}
+    config['ACCOUNTS'][account_name] = new_account
+
     if write_config(config):
         flash(f'Account "{account_name}" added successfully!', 'success')
     else:
         flash('Failed to write to config.json!', 'error')
+    return redirect(url_for('accounts'))
+
+@app.route('/set_master/<account_name>', methods=['POST'])
+def set_master(account_name):
+    config = read_config()
+    if not config:
+        flash('Could not read config.json!', 'error')
+        return redirect(url_for('accounts'))
+
+    if account_name not in config.get('ACCOUNTS', {}):
+        flash(f'Account "{account_name}" not found!', 'error')
+        return redirect(url_for('accounts'))
+
+    config['MASTER_ACCOUNT_NAME'] = account_name
+
+    if write_config(config):
+        flash(f'"{account_name}" is now the master account!', 'success')
+    else:
+        flash('Failed to update master account setting!', 'error')
+
     return redirect(url_for('accounts'))
 
 @app.route('/delete_account/<account_name>', methods=['POST'])
@@ -124,8 +153,13 @@ def delete_account(account_name):
     if not config:
         flash('Could not read config.json!', 'error')
         return redirect(url_for('accounts'))
-    if account_name in config['CHILD']:
-        del config['CHILD'][account_name]
+
+    if account_name in config.get('ACCOUNTS', {}):
+        if account_name == config.get('MASTER_ACCOUNT_NAME'):
+            flash('Cannot delete the master account. Please set a different master first.', 'error')
+            return redirect(url_for('accounts'))
+
+        del config['ACCOUNTS'][account_name]
         if write_config(config):
             flash(f'Account "{account_name}" deleted successfully!', 'success')
         else:
@@ -137,27 +171,27 @@ def delete_account(account_name):
 @app.route('/edit_account/<account_name>')
 def edit_account(account_name):
     config = read_config()
-    if not config or account_name not in config.get('CHILD', {}):
+    if not config or account_name not in config.get('ACCOUNTS', {}):
         flash(f'Account "{account_name}" not found!', 'error')
         return redirect(url_for('accounts'))
-    account = config['CHILD'][account_name]
+    account = config['ACCOUNTS'][account_name]
     return render_template('edit_account.html', account_name=account_name, account=account)
 
 @app.route('/update_account/<account_name>', methods=['POST'])
 def update_account(account_name):
     config = read_config()
-    if not config or account_name not in config.get('CHILD', {}):
+    if not config or account_name not in config.get('ACCOUNTS', {}):
         flash(f'Account "{account_name}" not found!', 'error')
         return redirect(url_for('accounts'))
-    account_data = config['CHILD'][account_name]
+
+    account_data = config['ACCOUNTS'][account_name]
     broker_type = account_data['broker']
+
     if broker_type == 'zerodha':
         password = request.form['password']
         totp_secret = request.form['totp_secret']
-        if password:
-            account_data['password'] = encrypt_value(password)
-        if totp_secret:
-            account_data['TOPTSecret'] = encrypt_value(totp_secret)
+        if password: account_data['password'] = encrypt_value(password)
+        if totp_secret: account_data['TOPTSecret'] = encrypt_value(totp_secret)
         account_data['userid'] = request.form['userid']
         account_data['APIKey'] = request.form['api_key']
         account_data['APISecret'] = request.form['api_secret']
@@ -165,8 +199,10 @@ def update_account(account_name):
     elif broker_type == 'dhan':
         account_data['clientID'] = request.form['userid']
         account_data['accessToken'] = request.form['access_token']
+
     account_data['multiplier'] = float(request.form['multiplier'])
     account_data['enabled'] = request.form['enabled']
+
     if write_config(config):
         flash(f'Account "{account_name}" updated successfully!', 'success')
     else:

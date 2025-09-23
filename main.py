@@ -42,25 +42,30 @@ def main():
         instrument_mappings = {}
         logging.warning("instrument_mappings.json not found or is invalid. No instrument translation will occur.")
 
-    # --- Initialize Master Account ---
-    master_config = config.get('MASTER')
-    if not master_config:
-        logging.error("MASTER account configuration is missing from config.json.")
+    # --- Initialize Accounts ---
+    master_account_name = config.get('MASTER_ACCOUNT_NAME')
+    all_accounts = config.get('ACCOUNTS', {})
+
+    if not master_account_name or not all_accounts or master_account_name not in all_accounts:
+        logging.error("MASTER_ACCOUNT_NAME not found or invalid in config.json.")
         sys.exit(1)
 
+    # Separate master from all accounts
+    master_config = all_accounts.pop(master_account_name)
+    child_configs = all_accounts # The rest are children
+
+    # --- Initialize Master Account ---
     master_broker = get_broker_instance(master_config)
     if not master_broker:
         sys.exit(1)
 
-    print("--- Logging in Master Account ---")
+    print(f"--- Logging in Master Account: {master_account_name} ---")
     if not master_broker.login():
-        logging.error(f"Failed to login master account: {master_config.get('userid') or master_config.get('clientID')}")
+        logging.error(f"Failed to login master account: {master_account_name}")
         sys.exit(1)
 
     # --- Initialize Child Accounts ---
-    child_configs = config.get('CHILD', {})
     child_brokers = {}
-
     print("\n--- Logging in Child Accounts ---")
     for name, child_config in child_configs.items():
         if child_config.get('enabled', 'N').upper() == 'Y':
