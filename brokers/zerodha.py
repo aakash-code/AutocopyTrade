@@ -32,6 +32,7 @@ class ZerodhaBroker(Broker):
         options.add_argument('--no-sandbox')
         options.add_argument('--ignore-certificate-errors')
         options.add_argument('--ignore-ssl-errors')
+        options.add_argument(f"--user-data-dir=/tmp/chrome_profile_{self.config['userid']}")
 
         try:
             # Assumes chromedriver is in the system's PATH
