@@ -9,9 +9,8 @@ from utils import encrypt_value
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-@app.before_first_request
-def initialize_database():
-    database.init_db()
+# Initialize the database once at startup
+database.init_db()
 
 # --- Main & API Routes ---
 @app.route('/')
