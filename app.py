@@ -3,68 +3,54 @@ import subprocess
 import os
 import json
 import pandas as pd
-from utils import read_config, write_config, encrypt_value
+import database
+from utils import encrypt_value
 
 app = Flask(__name__)
-# A secret key is needed for flashing messages
 app.secret_key = os.urandom(24)
 
-# --- State Management (simple file-based) ---
-STATUS_FILE = 'status.json'
-PID_FILE = 'replicator.pid'
+@app.before_first_request
+def initialize_database():
+    database.init_db()
 
-def get_status():
-    if not os.path.exists(STATUS_FILE):
-        return {'status': 'Stopped', 'message': 'Replicator has not been run yet.'}
-    try:
-        with open(STATUS_FILE, 'r') as f:
-            return json.load(f)
-    except (IOError, json.JSONDecodeError):
-        return {'status': 'Unknown', 'message': 'Could not read status file.'}
-
-def set_status(status, message):
-    with open(STATUS_FILE, 'w') as f:
-        json.dump({'status': status, 'message': message}, f)
-
-# --- Routes ---
+# --- Main & API Routes ---
 @app.route('/')
 def index():
-    return render_template('index.html', status=get_status())
+    return render_template('index.html')
 
 @app.route('/api/start', methods=['POST'])
 def start_replicator():
-    if os.path.exists(PID_FILE):
+    if os.path.exists('replicator.pid'):
         return jsonify({'status': 'error', 'message': 'Replicator is already running.'}), 400
     try:
         process = subprocess.Popen(['python', 'main.py'], stdout=open('replicator.log', 'w'), stderr=subprocess.STDOUT)
-        with open(PID_FILE, 'w') as f:
+        with open('replicator.pid', 'w') as f:
             f.write(str(process.pid))
-        set_status('Running', f'Replicator started with PID {process.pid}.')
         return jsonify({'status': 'success', 'message': 'Replicator started.'})
     except Exception as e:
-        set_status('Error', f'Failed to start replicator: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/stop', methods=['POST'])
 def stop_replicator():
-    if not os.path.exists(PID_FILE):
+    if not os.path.exists('replicator.pid'):
         return jsonify({'status': 'error', 'message': 'Replicator is not running.'}), 400
     try:
-        with open(PID_FILE, 'r') as f:
+        with open('replicator.pid', 'r') as f:
             pid = int(f.read())
         os.kill(pid, 9)
-        os.remove(PID_FILE)
-        set_status('Stopped', f'Replicator with PID {pid} has been stopped.')
+        os.remove('replicator.pid')
         return jsonify({'status': 'success', 'message': 'Replicator stopped.'})
     except Exception as e:
-        set_status('Error', f'Failed to stop replicator: {e}')
-        if os.path.exists(PID_FILE):
-            os.remove(PID_FILE)
+        if os.path.exists('replicator.pid'):
+            os.remove('replicator.pid')
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/status')
 def api_status():
-    return jsonify(get_status())
+    if os.path.exists('replicator.pid'):
+        return jsonify({'status': 'Running'})
+    else:
+        return jsonify({'status': 'Stopped'})
 
 @app.route('/api/broker_status')
 def broker_status():
@@ -75,171 +61,114 @@ def broker_status():
         return jsonify({})
 
 # --- Account Management Routes ---
-
 @app.route('/accounts')
 def accounts():
-    config = read_config()
-    if not config:
-        flash('Could not read config.json!', 'error')
-        return render_template('accounts.html', accounts={}, master_account_name=None)
-
-    return render_template('accounts.html',
-                           accounts=config.get('ACCOUNTS', {}),
-                           master_account_name=config.get('MASTER_ACCOUNT_NAME'))
+    all_accounts = database.get_all_accounts()
+    master_account = database.get_master_account()
+    master_account_name = master_account['name'] if master_account else None
+    return render_template('accounts.html', accounts=all_accounts, master_account_name=master_account_name)
 
 @app.route('/add_account', methods=['POST'])
 def add_account():
-    config = read_config()
-    if not config:
-        flash('Could not read config.json!', 'error')
-        return redirect(url_for('accounts'))
+    account_name = request.form.get('account_name')
+    broker = request.form.get('broker')
+    enabled = request.form.get('enabled') == 'Y'
 
-    account_name = request.form['account_name']
-    if account_name in config.get('ACCOUNTS', {}):
-        flash(f'Account name "{account_name}" already exists!', 'error')
-        return redirect(url_for('accounts'))
+    config_dict = {}
+    if broker == 'zerodha':
+        password = request.form.get('password')
+        totp_secret = request.form.get('totp_secret')
+        if password: config_dict['password'] = encrypt_value(password)
+        if totp_secret: config_dict['TOPTSecret'] = encrypt_value(totp_secret)
+        config_dict['userid'] = request.form.get('userid')
+        config_dict['APIKey'] = request.form.get('api_key')
+        config_dict['APISecret'] = request.form.get('api_secret')
+        config_dict['loginURL'] = f"https://kite.trade/connect/login?api_key={request.form.get('api_key')}"
+        config_dict['multiplier'] = float(request.form.get('multiplier', 1.0))
+    elif broker == 'dhan':
+        config_dict['clientID'] = request.form.get('userid')
+        config_dict['accessToken'] = request.form.get('access_token')
+        config_dict['multiplier'] = float(request.form.get('multiplier', 1.0))
 
-    broker_type = request.form['broker']
-    new_account = {'broker': broker_type, 'enabled': request.form['enabled']}
-
-    if broker_type == 'zerodha':
-        password = request.form['password']
-        totp_secret = request.form['totp_secret']
-        if password: new_account['password'] = encrypt_value(password)
-        if totp_secret: new_account['TOPTSecret'] = encrypt_value(totp_secret)
-        new_account['userid'] = request.form['userid']
-        new_account['APIKey'] = request.form['api_key']
-        new_account['APISecret'] = request.form['api_secret']
-        new_account['loginURL'] = f"https://kite.trade/connect/login?api_key={request.form['api_key']}"
-        new_account['multiplier'] = float(request.form['multiplier'])
-    elif broker_type == 'dhan':
-        new_account['clientID'] = request.form['userid']
-        new_account['accessToken'] = request.form['access_token']
-        new_account['multiplier'] = float(request.form['multiplier'])
-
-    if 'ACCOUNTS' not in config:
-        config['ACCOUNTS'] = {}
-    config['ACCOUNTS'][account_name] = new_account
-
-    if write_config(config):
-        flash(f'Account "{account_name}" added successfully!', 'success')
+    if database.add_account(account_name, broker, config_dict, enabled=enabled):
+        flash(f'Account "{account_name}" added successfully.', 'success')
     else:
-        flash('Failed to write to config.json!', 'error')
+        flash(f'Account with name "{account_name}" already exists.', 'error')
     return redirect(url_for('accounts'))
 
 @app.route('/set_master/<account_name>', methods=['POST'])
 def set_master(account_name):
-    config = read_config()
-    if not config:
-        flash('Could not read config.json!', 'error')
-        return redirect(url_for('accounts'))
-
-    if account_name not in config.get('ACCOUNTS', {}):
-        flash(f'Account "{account_name}" not found!', 'error')
-        return redirect(url_for('accounts'))
-
-    config['MASTER_ACCOUNT_NAME'] = account_name
-
-    if write_config(config):
-        flash(f'"{account_name}" is now the master account!', 'success')
-    else:
-        flash('Failed to update master account setting!', 'error')
-
+    database.set_master_account(account_name)
+    flash(f'"{account_name}" is now the master account.', 'success')
     return redirect(url_for('accounts'))
 
 @app.route('/toggle_account/<account_name>', methods=['POST'])
 def toggle_account(account_name):
-    config = read_config()
-    if not config or account_name not in config.get('ACCOUNTS', {}):
-        flash(f'Account "{account_name}" not found!', 'error')
-        return redirect(url_for('accounts'))
-
-    current_status = config['ACCOUNTS'][account_name].get('enabled', 'N')
-    new_status = 'N' if current_status == 'Y' else 'Y'
-    config['ACCOUNTS'][account_name]['enabled'] = new_status
-
-    if write_config(config):
-        flash(f'Account "{account_name}" has been {"disabled" if new_status == "N" else "enabled"}.', 'success')
+    all_accounts = database.get_all_accounts()
+    account = all_accounts.get(account_name)
+    if account:
+        new_status = not account['enabled']
+        database.update_account_enabled(account_name, new_status)
+        flash(f'Account "{account_name}" has been {"enabled" if new_status else "disabled"}.', 'success')
     else:
-        flash('Failed to update account status!', 'error')
-
+        flash(f'Account "{account_name}" not found.', 'error')
     return redirect(url_for('accounts'))
 
 @app.route('/delete_account/<account_name>', methods=['POST'])
 def delete_account(account_name):
-    config = read_config()
-    if not config:
-        flash('Could not read config.json!', 'error')
+    master_account = database.get_master_account()
+    if master_account and master_account['name'] == account_name:
+        flash('Cannot delete the master account. Please set a different master first.', 'error')
         return redirect(url_for('accounts'))
-
-    if account_name in config.get('ACCOUNTS', {}):
-        if account_name == config.get('MASTER_ACCOUNT_NAME'):
-            flash('Cannot delete the master account. Please set a different master first.', 'error')
-            return redirect(url_for('accounts'))
-
-        del config['ACCOUNTS'][account_name]
-        if write_config(config):
-            flash(f'Account "{account_name}" deleted successfully!', 'success')
-        else:
-            flash('Failed to write to config.json!', 'error')
-    else:
-        flash(f'Account "{account_name}" not found!', 'error')
+    database.delete_account(account_name)
+    flash(f'Account "{account_name}" deleted.', 'success')
     return redirect(url_for('accounts'))
 
 @app.route('/edit_account/<account_name>')
 def edit_account(account_name):
-    config = read_config()
-    if not config or account_name not in config.get('ACCOUNTS', {}):
+    all_accounts = database.get_all_accounts()
+    account = all_accounts.get(account_name)
+    if not account:
         flash(f'Account "{account_name}" not found!', 'error')
         return redirect(url_for('accounts'))
-    account = config['ACCOUNTS'][account_name]
     return render_template('edit_account.html', account_name=account_name, account=account)
 
 @app.route('/update_account/<account_name>', methods=['POST'])
 def update_account(account_name):
-    config = read_config()
-    if not config or account_name not in config.get('ACCOUNTS', {}):
-        flash(f'Account "{account_name}" not found!', 'error')
-        return redirect(url_for('accounts'))
-
-    account_data = config['ACCOUNTS'][account_name]
-    broker_type = account_data['broker']
-
-    if broker_type == 'zerodha':
-        password = request.form['password']
-        totp_secret = request.form['totp_secret']
-        if password: account_data['password'] = encrypt_value(password)
-        if totp_secret: account_data['TOPTSecret'] = encrypt_value(totp_secret)
-        account_data['userid'] = request.form['userid']
-        account_data['APIKey'] = request.form['api_key']
-        account_data['APISecret'] = request.form['api_secret']
-        account_data['loginURL'] = f"https://kite.trade/connect/login?api_key={request.form['api_key']}"
-    elif broker_type == 'dhan':
-        account_data['clientID'] = request.form['userid']
-        account_data['accessToken'] = request.form['access_token']
-
-    account_data['multiplier'] = float(request.form['multiplier'])
-    account_data['enabled'] = request.form['enabled']
-
-    if write_config(config):
-        flash(f'Account "{account_name}" updated successfully!', 'success')
-    else:
-        flash('Failed to write to config.json!', 'error')
+    enabled = request.form.get('enabled') == 'Y'
+    all_accounts = database.get_all_accounts()
+    account_data = all_accounts.get(account_name, {})
+    config_dict = {k: v for k, v in account_data.items() if k not in ['broker', 'enabled', 'is_master', 'name']}
+    broker = account_data.get('broker')
+    if broker == 'zerodha':
+        password = request.form.get('password')
+        totp_secret = request.form.get('totp_secret')
+        if password: config_dict['password'] = encrypt_value(password)
+        if totp_secret: config_dict['TOPTSecret'] = encrypt_value(totp_secret)
+        config_dict['userid'] = request.form.get('userid')
+        config_dict['APIKey'] = request.form.get('api_key')
+        config_dict['APISecret'] = request.form.get('api_secret')
+        config_dict['loginURL'] = f"https://kite.trade/connect/login?api_key={request.form.get('api_key')}"
+        config_dict['multiplier'] = float(request.form.get('multiplier', 1.0))
+    elif broker == 'dhan':
+        config_dict['clientID'] = request.form.get('userid')
+        config_dict['accessToken'] = request.form.get('access_token')
+        config_dict['multiplier'] = float(request.form.get('multiplier', 1.0))
+    database.update_account(account_name, config_dict, enabled)
+    flash(f'Account "{account_name}" updated successfully.', 'success')
     return redirect(url_for('accounts'))
 
-# --- Instrument Mapping Routes ---
+# --- Other UI Routes ---
 @app.route('/mapping')
 def mapping():
     try:
         zerodha_instruments = pd.read_csv('zerodha_instruments.csv')
     except FileNotFoundError:
         zerodha_instruments = pd.DataFrame()
-        flash('zerodha_instruments.csv not found. Please run fetch_instruments.py first.', 'warning')
     try:
         dhan_instruments = pd.read_csv('dhan_instruments.csv')
     except FileNotFoundError:
         dhan_instruments = pd.DataFrame()
-        flash('dhan_instruments.csv not found. Please run fetch_instruments.py first.', 'warning')
     try:
         with open('instrument_mappings.json', 'r') as f:
             mappings = json.load(f)
@@ -247,57 +176,20 @@ def mapping():
         mappings = {}
     return render_template('mapping.html', zerodha_instruments=zerodha_instruments.head(1000), dhan_instruments=dhan_instruments.head(1000), mappings=mappings)
 
-@app.route('/add_mapping', methods=['POST'])
-def add_mapping():
-    try:
-        with open('instrument_mappings.json', 'r') as f:
-            mappings = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        mappings = {}
-    source_instrument = request.form['zerodha_instrument']
-    target_instrument = request.form['dhan_instrument']
-    if not source_instrument or not target_instrument:
-        flash('Please select one instrument from each list.', 'error')
-        return redirect(url_for('mapping'))
-    if source_instrument in mappings:
-        mappings[source_instrument]['dhan'] = target_instrument
-    else:
-        mappings[source_instrument] = {'dhan': target_instrument}
-    try:
-        with open('instrument_mappings.json', 'w') as f:
-            json.dump(mappings, f, indent=4)
-        flash('Mapping saved successfully!', 'success')
-    except IOError:
-        flash('Failed to save mapping!', 'error')
-    return redirect(url_for('mapping'))
-
-# --- Global Settings Routes ---
 @app.route('/settings')
 def settings():
-    config = read_config()
-    if not config:
-        flash('Could not read config.json!', 'error')
-        return render_template('settings.html', product_filter_str="")
-    product_filter = config.get('DONOTPROCESSPROD', [])
+    product_filter = database.get_setting('DONOTPROCESSPROD') or []
     product_filter_str = ", ".join(product_filter)
     return render_template('settings.html', product_filter_str=product_filter_str)
 
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
-    config = read_config()
-    if not config:
-        flash('Could not read config.json!', 'error')
-        return redirect(url_for('settings'))
     product_filter_str = request.form.get('donotprocessprod', '')
     product_filter_list = [item.strip().upper() for item in product_filter_str.split(',') if item.strip()]
-    config['DONOTPROCESSPROD'] = product_filter_list
-    if write_config(config):
-        flash('Global settings updated successfully!', 'success')
-    else:
-        flash('Failed to write to config.json!', 'error')
+    database.set_setting('DONOTPROCESSPROD', product_filter_list)
+    flash('Global settings updated successfully!', 'success')
     return redirect(url_for('settings'))
 
-# --- History Route ---
 @app.route('/history')
 def history():
     try:
@@ -305,10 +197,6 @@ def history():
         trade_log = trade_log_df.iloc[::-1].to_dict(orient='records')
     except FileNotFoundError:
         trade_log = []
-        flash('trade_log.csv not found. No trades have been logged yet.', 'warning')
-    except Exception as e:
-        trade_log = []
-        flash(f'Error reading trade log: {e}', 'error')
     return render_template('history.html', trade_log=trade_log)
 
 if __name__ == '__main__':

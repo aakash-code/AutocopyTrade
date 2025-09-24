@@ -8,7 +8,7 @@ from datetime import datetime
 
 from brokers.zerodha import ZerodhaBroker
 from brokers.dhan import DhanBroker
-from utils import read_config
+import database
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,9 +30,17 @@ def main():
     """
     Main function to run the trade replicator.
     """
-    config = read_config()
-    if not config:
+    database.init_db() # Ensure DB and tables exist
+
+    # --- Initialize Accounts from DB ---
+    master_config = database.get_master_account()
+    if not master_config:
+        logging.error("No master account is set in the database. Please set one from the web UI.")
         sys.exit(1)
+
+    all_accounts = database.get_all_accounts()
+    master_account_name = master_config['name']
+    child_configs = {name: acc for name, acc in all_accounts.items() if name != master_account_name}
 
     # Load instrument mappings
     try:
@@ -41,18 +49,6 @@ def main():
     except (FileNotFoundError, json.JSONDecodeError):
         instrument_mappings = {}
         logging.warning("instrument_mappings.json not found or is invalid. No instrument translation will occur.")
-
-    # --- Initialize Accounts ---
-    master_account_name = config.get('MASTER_ACCOUNT_NAME')
-    all_accounts = config.get('ACCOUNTS', {})
-
-    if not master_account_name or not all_accounts or master_account_name not in all_accounts:
-        logging.error("MASTER_ACCOUNT_NAME not found or invalid in config.json.")
-        sys.exit(1)
-
-    # Separate master from all accounts
-    master_config = all_accounts.pop(master_account_name)
-    child_configs = all_accounts # The rest are children
 
     # --- Initialize Master Account ---
     master_broker = get_broker_instance(master_config)
@@ -87,7 +83,7 @@ def main():
     BROKER_STATUS_FILE = 'broker_status.json'
     TRADE_LOG_FILE = 'trade_log.csv'
     order_manager = OrderManager()
-    prod_filter = config.get('DONOTPROCESSPROD', [])
+    prod_filter = database.get_setting('DONOTPROCESSPROD') or []
 
     def log_trade(child_name, action, order_data, result):
         """Appends a record of a trade action to the CSV log."""
