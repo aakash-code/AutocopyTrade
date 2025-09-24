@@ -64,7 +64,8 @@ def main():
     child_brokers = {}
     print("\n--- Logging in Child Accounts ---")
     for name, child_config in child_configs.items():
-        if child_config.get('enabled', 'N').upper() == 'Y':
+        # The 'enabled' flag from the DB is a boolean (0 or 1), not 'Y'/'N'.
+        if child_config.get('enabled'):
             child_broker = get_broker_instance(child_config)
             if child_broker:
                 if child_broker.login():
