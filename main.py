@@ -127,8 +127,54 @@ def main():
         except IOError:
             logging.error(f"Could not write to {BROKER_STATUS_FILE}")
 
-    def copy_trade_callback(ws, master_order, mappings):
-        logging.info(f"Order update received: {master_order}")
+    def normalize_order_data(order, broker):
+        """
+        Normalizes order data from different brokers into a common format.
+        """
+        broker_type = broker.config.get('broker')
+        normalized = {}
+
+        if broker_type == 'dhan':
+            # --- Dhan Specific Mappings ---
+            status_map = {
+                'Pending': 'OPEN',
+                'Traded': 'COMPLETE',
+                'Cancelled': 'CANCELLED',
+                'Rejected': 'REJECTED'
+            }
+            normalized['status'] = status_map.get(order.get('status'), order.get('status'))
+
+            normalized['order_id'] = order.get('orderNo')
+            normalized['tradingsymbol'] = order.get('symbol')
+            normalized['exchange'] = order.get('exchange')
+            normalized['product'] = order.get('productName')
+            normalized['order_type'] = order.get('orderType')
+            normalized['transaction_type'] = order.get('txnType')
+            normalized['quantity'] = order.get('quantity')
+            normalized['price'] = order.get('price')
+            normalized['trigger_price'] = order.get('triggerPrice', 0)
+            normalized['variety'] = 'regular' # Dhan API doesn't specify variety in the same way
+            normalized['validity'] = order.get('validity')
+            # For modification checks, we need all relevant fields
+            normalized.update(order)
+
+        elif broker_type == 'zerodha':
+            # --- Zerodha data is already the standard, just copy it ---
+            # (A more robust implementation could do explicit mapping here too)
+            normalized = order.copy()
+
+        else:
+            logging.warning(f"Order normalization not implemented for broker: {broker_type}. Using raw data.")
+            normalized = order.copy()
+
+        logging.info(f"Normalized order: {normalized}")
+        return normalized
+
+    def copy_trade_callback(ws, raw_master_order, mappings):
+        # First, normalize the order data
+        master_order = normalize_order_data(raw_master_order, master_broker)
+
+        logging.info(f"Processing normalized order: {master_order}")
 
         if master_order.get('product') in prod_filter:
             logging.info(f"Product type {master_order.get('product')} is in the filter. Ignoring.")
