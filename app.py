@@ -147,6 +147,24 @@ def set_master(account_name):
 
     return redirect(url_for('accounts'))
 
+@app.route('/toggle_account/<account_name>', methods=['POST'])
+def toggle_account(account_name):
+    config = read_config()
+    if not config or account_name not in config.get('ACCOUNTS', {}):
+        flash(f'Account "{account_name}" not found!', 'error')
+        return redirect(url_for('accounts'))
+
+    current_status = config['ACCOUNTS'][account_name].get('enabled', 'N')
+    new_status = 'N' if current_status == 'Y' else 'Y'
+    config['ACCOUNTS'][account_name]['enabled'] = new_status
+
+    if write_config(config):
+        flash(f'Account "{account_name}" has been {"disabled" if new_status == "N" else "enabled"}.', 'success')
+    else:
+        flash('Failed to update account status!', 'error')
+
+    return redirect(url_for('accounts'))
+
 @app.route('/delete_account/<account_name>', methods=['POST'])
 def delete_account(account_name):
     config = read_config()
